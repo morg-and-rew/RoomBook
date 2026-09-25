@@ -22,49 +22,55 @@ src/RoomBook.Api/
 
 ## Запуск локально
 
-### 1. Создать базу данных
-В уже установленном PostgreSQL создай пустую базу:
-```sql
-CREATE DATABASE roombook;
-```
-Если логин/пароль/хост отличаются от `postgres/postgres@localhost:5432` — поправь
-строку подключения в `src/RoomBook.Api/appsettings.json` (`ConnectionStrings:Default`).
+Нужны [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) и PostgreSQL.
 
-### 2. Восстановить зависимости
+### 1. Поднять PostgreSQL
+Любой из вариантов:
+- **Уже установленный PostgreSQL** — сервис ожидает `postgres/postgres@localhost:5432`.
+  Если логин/пароль/хост отличаются — поправь строку подключения в
+  `src/RoomBook.Api/appsettings.json` (`ConnectionStrings:Default`).
+- **Docker** — из корня репозитория:
+  ```bash
+  docker compose up -d
+  ```
+
+Создавать базу `roombook` вручную не нужно.
+
+### 2. Запустить сервис
 ```bash
 cd src/RoomBook.Api
-dotnet restore
-```
-
-### 3. Установить EF Core CLI (если ещё не стоит)
-```bash
-dotnet tool install --global dotnet-ef
-```
-
-### 4. Создать и применить миграцию
-```bash
-dotnet ef migrations add InitialCreate
-dotnet ef database update
-```
-Это создаст таблицы `users`, `rooms`, `bookings`, `notifications` в базе `roombook`.
-
-### 5. Запустить сервис
-```bash
 dotnet run
 ```
-Swagger UI будет доступен по адресу, который выведет консоль (обычно
-`https://localhost:7xxx/swagger` или `http://localhost:5xxx/swagger`).
+Swagger UI: http://localhost:5080/swagger
+
+В Visual Studio / Rider достаточно нажать F5 — браузер со Swagger откроется сам.
+Профиль `https` дополнительно слушает https://localhost:7080 (для него нужен
+доверенный dev-сертификат: `dotnet dev-certs https --trust`).
+
+При старте в режиме Development сервис сам создаёт базу `roombook` и применяет
+миграции из `src/RoomBook.Api/Migrations` — появятся таблицы `Users`, `Rooms`,
+`Bookings`, `Notifications`.
+
+### Новые миграции
+После изменения сущностей:
+```bash
+dotnet tool install --global dotnet-ef --version 8.0.8   # один раз
+cd src/RoomBook.Api
+dotnet ef migrations add <Название>
+```
+Миграция применится автоматически при следующем запуске.
 
 ## Как выдать себе права администратора
 
 Все новые пользователи регистрируются с ролью `User`. Чтобы протестировать
 эндпоинты администратора (`/api/rooms` POST/PUT/DELETE, `/api/bookings/{id}/approve`,
 `/api/reports/occupancy`), зарегистрируйся через `/api/auth/register`, а затем
-вручную повысь роль в базе:
+вручную повысь роль в базе (psql, pgAdmin, DBeaver и т.п.):
 ```sql
-UPDATE users SET role = 1 WHERE email = 'your@email.com';
+UPDATE "Users" SET "Role" = 1 WHERE "Email" = 'your@email.com';
 ```
-(`role = 1` соответствует `UserRole.Admin`). После этого получи новый токен через
+(`"Role" = 1` соответствует `UserRole.Admin`; имена таблиц и колонок EF создаёт
+в PascalCase, поэтому в PostgreSQL их нужно брать в кавычки). После этого получи новый токен через
 `/api/auth/login` — в нём уже будет claim `role = Admin`.
 
 ## Быстрая проверка сценария (happy path)
@@ -79,6 +85,10 @@ UPDATE users SET role = 1 WHERE email = 'your@email.com';
 8. `GET /api/bookings/my` — увидеть заявку в статусе `Approved`.
 9. `GET /api/notifications/my` — увидеть уведомление о подтверждении.
 10. `GET /api/reports/occupancy?dateFrom=...&dateTo=...` (Admin) — увидеть отчёт.
+
+Даты хранятся в UTC. Время без часового пояса (`2026-10-01T09:00:00`, `2026-10-01`)
+считается заданным в UTC, время со смещением (`2026-10-01T12:00:00+03:00`)
+переводится в UTC.
 
 ## Соответствие функциональным требованиям
 

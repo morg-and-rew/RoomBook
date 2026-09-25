@@ -80,6 +80,15 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// ---------- Database migrations ----------
+// В Development схема БД создаётся/обновляется при старте, поэтому для
+// локального запуска не нужен отдельный шаг `dotnet ef database update`.
+if (app.Environment.IsDevelopment())
+{
+    using var scope = app.Services.CreateScope();
+    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.Migrate();
+}
+
 // ---------- Pipeline ----------
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 

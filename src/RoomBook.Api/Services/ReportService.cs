@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using RoomBook.Api.Common;
 using RoomBook.Api.Data;
 using RoomBook.Api.Dtos;
 using RoomBook.Api.Entities;
@@ -17,6 +18,9 @@ public class ReportService : IReportService
     /// <summary>Отчёт по загруженности помещений за период (ФТ11).</summary>
     public async Task<OccupancyReportDto> GetOccupancyReportAsync(DateTime dateFrom, DateTime dateTo)
     {
+        dateFrom = dateFrom.AsUtc();
+        dateTo = dateTo.AsUtc();
+
         var bookings = await _db.Bookings
             .Include(b => b.Room)
             .Where(b => b.Status == BookingStatus.Approved &&

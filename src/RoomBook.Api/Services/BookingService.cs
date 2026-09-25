@@ -28,7 +28,10 @@ public class BookingService : IBookingService
     /// </summary>
     public async Task<BookingDto> CreateAsync(Guid userId, BookingCreateDto dto)
     {
-        if (dto.EndTime <= dto.StartTime)
+        var startTime = dto.StartTime.AsUtc();
+        var endTime = dto.EndTime.AsUtc();
+
+        if (endTime <= startTime)
         {
             throw new ApiException("Время окончания должно быть позже времени начала.");
         }
@@ -41,8 +44,8 @@ public class BookingService : IBookingService
         var hasConflict = await _db.Bookings.AnyAsync(b =>
             b.RoomId == dto.RoomId &&
             (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Approved) &&
-            b.StartTime < dto.EndTime &&
-            b.EndTime > dto.StartTime);
+            b.StartTime < endTime &&
+            b.EndTime > startTime);
 
         if (hasConflict)
         {
@@ -53,8 +56,8 @@ public class BookingService : IBookingService
         {
             RoomId = dto.RoomId,
             UserId = userId,
-            StartTime = dto.StartTime,
-            EndTime = dto.EndTime,
+            StartTime = startTime,
+            EndTime = endTime,
             Purpose = dto.Purpose ?? string.Empty,
             Status = BookingStatus.Pending
         };

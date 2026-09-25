@@ -1,13 +1,15 @@
-# RoomBook API
+# RoomBook
 
-Серверная часть (backend) сервиса бронирования аудиторий и переговорных комнат.
-ASP.NET Core 8 Web API + PostgreSQL + Entity Framework Core.
+Сервис бронирования аудиторий и переговорных комнат:
+ASP.NET Core 8 Web API + PostgreSQL + Entity Framework Core и веб-интерфейс,
+который раздаёт тот же сервис.
 
 ## Стек
 - .NET 8 / C#
 - PostgreSQL (через Npgsql.EntityFrameworkCore.PostgreSQL)
 - JWT-аутентификация
 - Swagger (OpenAPI) — доступен в Development-режиме
+- Веб-интерфейс — HTML/CSS/JavaScript без фреймворков и сборки (`wwwroot/`)
 
 ## Структура проекта
 ```
@@ -18,6 +20,7 @@ src/RoomBook.Api/
   Entities/        — модель данных (User, Room, Booking, Notification)
   Dtos/            — объекты передачи данных между клиентом и сервером
   Common/          — сквозные механизмы: обработка ошибок, JWT-хелперы
+  wwwroot/         — веб-интерфейс (index.html, css/, js/)
 ```
 
 ## Запуск локально
@@ -41,9 +44,10 @@ src/RoomBook.Api/
 cd src/RoomBook.Api
 dotnet run
 ```
-Swagger UI: http://localhost:5080/swagger
+- Сайт: http://localhost:5080
+- Swagger UI: http://localhost:5080/swagger
 
-В Visual Studio / Rider достаточно нажать F5 — браузер со Swagger откроется сам.
+В Visual Studio / Rider достаточно нажать F5 — браузер с сайтом откроется сам.
 Профиль `https` дополнительно слушает https://localhost:7080 (для него нужен
 доверенный dev-сертификат: `dotnet dev-certs https --trust`).
 
@@ -59,6 +63,26 @@ cd src/RoomBook.Api
 dotnet ef migrations add <Название>
 ```
 Миграция применится автоматически при следующем запуске.
+
+## Веб-интерфейс
+
+Открывается на http://localhost:5080 после `dotnet run`, отдельно ничего ставить не нужно.
+
+- **Помещения** — карточки с вместимостью, оборудованием и шкалой занятости на
+  выбранный день (подтверждённые и ожидающие брони, прошедшее время, «сейчас»);
+  фильтры по дате, вместимости и оборудованию. Гостю доступно без входа.
+- **Бронирование** — дата и время, на шкале видно выбранный интервал и
+  пересечения с чужими бронями ещё до отправки заявки.
+- **Мои брони** — предстоящие и все заявки со статусами, отмена.
+- **Уведомления** — события по заявкам; счётчик новых в меню.
+- **Заявки** (администратор) — подтверждение и отклонение с причиной.
+- **Отчёт** (администратор) — загруженность помещений за период: показатели и
+  диаграмма часов по помещениям.
+- Администратор добавляет, редактирует и скрывает помещения прямо на странице
+  «Помещения». Есть тёмная тема и мобильная вёрстка.
+
+Время на сайте вводится и показывается в часовом поясе браузера, на сервер
+уходит в UTC.
 
 ## Как выдать себе права администратора
 
@@ -81,7 +105,8 @@ UPDATE "Users" SET "Role" = 1 WHERE "Email" = 'your@email.com';
 4. `POST /api/rooms` — создать помещение (`name`, `capacity`, `equipment: ["Проектор"]`).
 5. Залогиниться обычным пользователем, `GET /api/rooms` — увидеть помещение.
 6. `POST /api/bookings` — создать заявку на бронирование.
-7. Под Admin-токеном: `PUT /api/bookings/{id}/approve` — подтвердить.
+7. Под Admin-токеном: `GET /api/bookings?status=Pending` — найти заявку,
+   `PUT /api/bookings/{id}/approve` — подтвердить.
 8. `GET /api/bookings/my` — увидеть заявку в статусе `Approved`.
 9. `GET /api/notifications/my` — увидеть уведомление о подтверждении.
 10. `GET /api/reports/occupancy?dateFrom=...&dateTo=...` (Admin) — увидеть отчёт.
@@ -94,7 +119,7 @@ UPDATE "Users" SET "Role" = 1 WHERE "Email" = 'your@email.com';
 
 | Требование | Где реализовано |
 |---|---|
-| ФТ1 — список помещений и занятость | `GET /api/rooms` |
+| ФТ1 — список помещений и занятость | `GET /api/rooms?date=...` (`busySlots` — занятые интервалы на сутки) |
 | ФТ2 — регистрация/вход | `AuthController`, `AuthService` |
 | ФТ3 — фильтр по вместимости/оборудованию | `RoomService.GetAllAsync` |
 | ФТ4 — создание брони | `BookingService.CreateAsync` |
@@ -103,7 +128,7 @@ UPDATE "Users" SET "Role" = 1 WHERE "Email" = 'your@email.com';
 | ФТ7 — отмена брони | `BookingService.CancelAsync` |
 | ФТ8 — уведомления | `NotificationService`, `GET /api/notifications/my` |
 | ФТ9 — управление помещениями | `RoomsController` (Admin) |
-| ФТ10 — подтверждение/отклонение заявки | `BookingService.ApproveAsync/RejectAsync` |
+| ФТ10 — подтверждение/отклонение заявки | `GET /api/bookings` (Admin), `BookingService.ApproveAsync/RejectAsync` |
 | ФТ11 (US10) — отчёт по загруженности | `ReportsController` |
 | НФТ2 — безопасность (JWT) | `Program.cs`, `[Authorize]` |
 | НФТ3 — согласованность БД | `IsolationLevel.Serializable` в `BookingService.CreateAsync` |

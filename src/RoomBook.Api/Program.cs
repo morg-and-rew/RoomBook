@@ -98,6 +98,14 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// Веб-интерфейс из wwwroot. no-cache: браузер сверяет файлы с сервером (ETag),
+// поэтому после обновления кода не показывает устаревшую версию сайта.
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache"
+});
+
 app.UseCors("Default");
 app.UseAuthentication();
 app.UseAuthorization();

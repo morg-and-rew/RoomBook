@@ -84,6 +84,22 @@ public class BookingService : IBookingService
         return bookings.Select(ToDto).ToList();
     }
 
+    public async Task<IReadOnlyList<BookingDto>> GetAllAsync(BookingStatus? status)
+    {
+        var query = _db.Bookings
+            .Include(b => b.Room)
+            .Include(b => b.User)
+            .AsQueryable();
+
+        if (status is not null)
+        {
+            query = query.Where(b => b.Status == status);
+        }
+
+        var bookings = await query.OrderByDescending(b => b.CreatedAt).ToListAsync();
+        return bookings.Select(ToDto).ToList();
+    }
+
     public async Task<BookingDto> CancelAsync(Guid userId, Guid bookingId)
     {
         var booking = await _db.Bookings.Include(b => b.Room).Include(b => b.User)

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RoomBook.Api.Common;
 using RoomBook.Api.Dtos;
+using RoomBook.Api.Entities;
 using RoomBook.Api.Services;
 
 namespace RoomBook.Api.Controllers;
@@ -31,6 +32,15 @@ public class BookingsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<BookingDto>>> GetMy()
     {
         var bookings = await _bookingService.GetMyBookingsAsync(User.GetUserId());
+        return Ok(bookings);
+    }
+
+    /// <summary>US9: все заявки для администратора, с фильтром по статусу (Pending, Approved, ...).</summary>
+    [HttpGet]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<IReadOnlyList<BookingDto>>> GetAll([FromQuery] BookingStatus? status)
+    {
+        var bookings = await _bookingService.GetAllAsync(status);
         return Ok(bookings);
     }
 

@@ -7,7 +7,15 @@ public record RoomDto(
     string Name,
     int Capacity,
     string[] Equipment,
-    bool IsActive
+    bool IsActive,
+    IReadOnlyList<RoomBusySlotDto>? BusySlots = null
+);
+
+/// <summary>Занятый интервал помещения (заявка в статусе Pending или Approved).</summary>
+public record RoomBusySlotDto(
+    DateTime StartTime,
+    DateTime EndTime,
+    string Status
 );
 
 public record RoomCreateDto(

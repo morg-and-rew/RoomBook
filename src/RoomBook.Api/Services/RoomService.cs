@@ -17,9 +17,10 @@ public class RoomService : IRoomService
 
     /// <summary>
     /// Возвращает активные помещения. Если передана дата, для каждого
-    /// помещения дополнительно вычисляется признак занятости на эту дату
-    /// (через отдельный запрос статусов броней) — используется на UI
-    /// для отображения статуса "свободно"/"занято" (ФТ1).
+    /// помещения дополнительно возвращаются занятые интервалы на сутки,
+    /// начиная с этого момента (отдельным запросом по броням) — по ним UI
+    /// показывает занятость (ФТ1). "2026-10-01" — сутки по UTC,
+    /// "2026-10-01T00:00:00+03:00" — сутки по московскому времени.
     /// </summary>
     public async Task<IReadOnlyList<RoomDto>> GetAllAsync(DateTime? date, int? capacity, string[]? equipment)
     {
@@ -40,7 +41,27 @@ public class RoomService : IRoomService
         }
 
         var rooms = await query.OrderBy(r => r.Name).ToListAsync();
-        return rooms.Select(ToDto).ToList();
+
+        if (date is null)
+        {
+            return rooms.Select(r => ToDto(r)).ToList();
+        }
+
+        var dayStart = date.Value.AsUtc();
+        var dayEnd = dayStart.AddDays(1);
+        var roomIds = rooms.Select(r => r.Id).ToList();
+
+        var bookings = await _db.Bookings
+            .Where(b => roomIds.Contains(b.RoomId) &&
+                        (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Approved) &&
+                        b.StartTime < dayEnd && b.EndTime > dayStart)
+            .OrderBy(b => b.StartTime)
+            .ToListAsync();
+
+        var slotsByRoom = bookings.ToLookup(b => b.RoomId,
+            b => new RoomBusySlotDto(b.StartTime, b.EndTime, b.Status.ToString()));
+
+        return rooms.Select(r => ToDto(r, slotsByRoom[r.Id].ToList())).ToList();
     }
 
     public async Task<RoomDto> CreateAsync(RoomCreateDto dto)
@@ -81,5 +102,6 @@ public class RoomService : IRoomService
         await _db.SaveChangesAsync();
     }
 
-    private static RoomDto ToDto(Room r) => new(r.Id, r.Name, r.Capacity, r.Equipment, r.IsActive);
+    private static RoomDto ToDto(Room r, IReadOnlyList<RoomBusySlotDto>? busySlots = null) =>
+        new(r.Id, r.Name, r.Capacity, r.Equipment, r.IsActive, busySlots);
 }

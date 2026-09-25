@@ -11,14 +11,14 @@ public record RoomDto(
 );
 
 public record RoomCreateDto(
-    [property: Required, MaxLength(200)] string Name,
-    [property: Range(1, 1000)] int Capacity,
+    [Required, MaxLength(200)] string Name,
+    [Range(1, 1000)] int Capacity,
     string[]? Equipment
 );
 
 public record RoomUpdateDto(
-    [property: Required, MaxLength(200)] string Name,
-    [property: Range(1, 1000)] int Capacity,
+    [Required, MaxLength(200)] string Name,
+    [Range(1, 1000)] int Capacity,
     string[]? Equipment,
     bool IsActive
 );

@@ -3,14 +3,14 @@ using System.ComponentModel.DataAnnotations;
 namespace RoomBook.Api.Dtos;
 
 public record RegisterDto(
-    [property: Required, MaxLength(200)] string FullName,
-    [property: Required, EmailAddress] string Email,
-    [property: Required, MinLength(6)] string Password
+    [Required, MaxLength(200)] string FullName,
+    [Required, EmailAddress] string Email,
+    [Required, MinLength(6)] string Password
 );
 
 public record LoginDto(
-    [property: Required, EmailAddress] string Email,
-    [property: Required] string Password
+    [Required, EmailAddress] string Email,
+    [Required] string Password
 );
 
 public record AuthResponseDto(

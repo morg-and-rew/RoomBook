@@ -1,14 +1,39 @@
+using Microsoft.AspNetCore.Identity;
+using RoomBook.Api.Common;
+
 namespace RoomBook.Api.Entities;
 
 public class User
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string FullName { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
-    public string PasswordHash { get; set; } = string.Empty;
-    public UserRole Role { get; set; } = UserRole.User;
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    private static readonly PasswordHasher<User> PasswordHasher = new();
 
-    public ICollection<Booking> Bookings { get; set; } = new List<Booking>();
-    public ICollection<Notification> Notifications { get; set; } = new List<Notification>();
+    private User() { } // для EF Core
+
+    public User(string email, string password, string fullName)
+    {
+        Email = email;
+        ChangeFullName(fullName);
+        PasswordHash = PasswordHasher.HashPassword(this, password);
+    }
+
+    public long Id { get; private set; }
+    public string Email { get; private set; } = string.Empty;
+    public string PasswordHash { get; private set; } = string.Empty;
+    public string FullName { get; private set; } = string.Empty;
+    public UserRole Role { get; private set; } = UserRole.User;
+    public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
+
+    public bool IsAdmin() => Role == UserRole.Admin;
+
+    public bool VerifyPassword(string password) =>
+        PasswordHasher.VerifyHashedPassword(this, PasswordHash, password) != PasswordVerificationResult.Failed;
+
+    public void ChangeFullName(string fullName)
+    {
+        if (string.IsNullOrWhiteSpace(fullName))
+        {
+            throw new DomainException("Укажите имя пользователя.");
+        }
+        FullName = fullName.Trim();
+    }
 }

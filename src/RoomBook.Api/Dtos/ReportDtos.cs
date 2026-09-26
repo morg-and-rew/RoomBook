@@ -1,21 +1,25 @@
 namespace RoomBook.Api.Dtos;
 
-public record RoomOccupancyDto(
-    Guid RoomId,
+public record RoomUtilizationDto(
+    long RoomId,
     string RoomName,
+    string Building,
     int TotalBookings,
-    double TotalHoursBooked
+    double TotalHours
 );
 
-public record OccupancyReportDto(
-    DateTime DateFrom,
-    DateTime DateTo,
-    IReadOnlyList<RoomOccupancyDto> Rooms
+public record UtilizationReportDto(
+    DateTime From,
+    DateTime To,
+    IReadOnlyList<RoomUtilizationDto> Rooms
 );
 
 public record NotificationDto(
-    Guid Id,
+    long Id,
+    string? Type,
     string Message,
-    bool IsRead,
-    DateTime CreatedAt
+    long? BookingId,
+    DateTime SentAt,
+    DateTime? ReadAt,
+    bool IsRead
 );

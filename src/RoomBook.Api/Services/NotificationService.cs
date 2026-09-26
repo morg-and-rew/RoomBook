@@ -1,46 +1,67 @@
-using Microsoft.EntityFrameworkCore;
-using RoomBook.Api.Data;
-using RoomBook.Api.Dtos;
+using RoomBook.Api.Common;
 using RoomBook.Api.Entities;
+using RoomBook.Api.Repositories;
 
 namespace RoomBook.Api.Services;
 
 /// <summary>
-/// Простая реализация уведомлений (ФТ8): сообщение сохраняется в БД
-/// и отдаётся пользователю через GET /api/notifications/my.
-/// Канал email/push можно добавить позже, не меняя вызывающий код —
-/// достаточно расширить этот метод рассылкой через внешний провайдер.
+/// Уведомления (ФТ8) сохраняются в БД и отдаются через GET /api/notifications/my.
+/// Канал email/push можно добавить здесь, не меняя вызывающий код.
 /// </summary>
 public class NotificationService : INotificationService
 {
-    private readonly AppDbContext _db;
+    private readonly INotificationRepository _notificationRepository;
     private readonly ILogger<NotificationService> _logger;
 
-    public NotificationService(AppDbContext db, ILogger<NotificationService> logger)
+    public NotificationService(INotificationRepository notificationRepository, ILogger<NotificationService> logger)
     {
-        _db = db;
+        _notificationRepository = notificationRepository;
         _logger = logger;
     }
 
-    public async Task NotifyAsync(Guid userId, string message)
+    public async Task NotifyStatusChangeAsync(Booking booking, NotificationType type)
     {
-        _db.Notifications.Add(new Notification
+        var room = booking.Room.Name;
+        var message = type switch
         {
-            UserId = userId,
-            Message = message
-        });
-        await _db.SaveChangesAsync();
-        _logger.LogInformation("Уведомление для {UserId}: {Message}", userId, message);
+            NotificationType.Created => $"Заявка на бронирование «{room}» создана и ожидает подтверждения.",
+            NotificationType.Confirmed => $"Ваша заявка на «{room}» подтверждена администратором.",
+            NotificationType.Rejected => $"Ваша заявка на «{room}» отклонена."
+                + (booking.RejectReason is null ? string.Empty : $" Причина: {booking.RejectReason}."),
+            NotificationType.Cancelled => $"Заявка на «{room}» отменена.",
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+        };
+
+        await _notificationRepository.SaveAsync(new Notification(booking.UserId, message, type, booking.Id));
+        _logger.LogInformation("Уведомление ({Type}) для {UserId}: {Message}", type, booking.UserId, message);
     }
 
-    public async Task<IReadOnlyList<NotificationDto>> GetMyAsync(Guid userId)
+    public async Task NotifyUserAsync(User user, string message)
     {
-        var items = await _db.Notifications
-            .Where(n => n.UserId == userId)
-            .OrderByDescending(n => n.CreatedAt)
-            .Take(50)
-            .ToListAsync();
+        await _notificationRepository.SaveAsync(new Notification(user.Id, message));
+        _logger.LogInformation("Уведомление для {UserId}: {Message}", user.Id, message);
+    }
 
-        return items.Select(n => new NotificationDto(n.Id, n.Message, n.IsRead, n.CreatedAt)).ToList();
+    public Task<IReadOnlyList<Notification>> ListUserNotificationsAsync(User user) =>
+        _notificationRepository.FindByUserAsync(user);
+
+    public async Task<Notification> MarkAsReadAsync(User user, long notificationId)
+    {
+        var notification = (await _notificationRepository.FindByUserAsync(user)).FirstOrDefault(n => n.Id == notificationId)
+            ?? throw ApiException.NotFound("Уведомление не найдено.");
+        notification.MarkAsRead();
+        return await _notificationRepository.SaveAsync(notification);
+    }
+
+    public async Task MarkAllAsReadAsync(User user)
+    {
+        foreach (var notification in await _notificationRepository.FindByUserAsync(user))
+        {
+            if (notification.ReadAt is null)
+            {
+                notification.MarkAsRead();
+                await _notificationRepository.SaveAsync(notification);
+            }
+        }
     }
 }

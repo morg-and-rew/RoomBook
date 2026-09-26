@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import {
-  h, field, errorBox, showError, pageHeader, emptyState, errorState, skeleton,
+  h, field, errorBox, showError, pageHeader, emptyState, errorState, skeleton, withBusy, toast,
   toDateInput, startOfDay, endOfDay, formatNumber, plural,
 } from '../ui.js';
 
@@ -74,7 +74,7 @@ export function reportPage(view) {
     result.replaceChildren(...skeleton(1, 'block'));
     try {
       const [report, rooms] = await Promise.all([
-        api.occupancy(startOfDay(period.from).toISOString(), endOfDay(period.to).toISOString()),
+        api.utilization(startOfDay(period.from).toISOString(), endOfDay(period.to).toISOString()),
         api.rooms(),
       ]);
       if (id !== loadId || !view.isConnected) return;
@@ -92,11 +92,22 @@ export function reportPage(view) {
   }
 }
 
+async function downloadCsv(event) {
+  const button = event.currentTarget;
+  await withBusy(button, async () => {
+    try {
+      await api.downloadUtilizationCsv(startOfDay(period.from).toISOString(), endOfDay(period.to).toISOString());
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
 /** Отчёт API содержит только помещения с бронями — добавляем остальные активные с нулём. */
 function mergeRows(reportRooms, rooms) {
-  const rows = reportRooms.map((r) => ({ id: r.roomId, name: r.roomName, bookings: r.totalBookings, hours: r.totalHoursBooked }));
+  const rows = reportRooms.map((r) => ({ id: r.roomId, name: r.roomName, building: r.building, bookings: r.totalBookings, hours: r.totalHours }));
   for (const room of rooms) {
-    if (!rows.some((row) => row.id === room.id)) rows.push({ id: room.id, name: room.name, bookings: 0, hours: 0 });
+    if (!rows.some((row) => row.id === room.id)) rows.push({ id: room.id, name: room.name, building: room.building, bookings: 0, hours: 0 });
   }
   return rows.sort((a, b) => b.hours - a.hours || a.name.localeCompare(b.name, 'ru'));
 }
@@ -118,12 +129,14 @@ function stats(rows) {
 function chart(rows) {
   const max = Math.max(...rows.map((row) => row.hours));
   return h('section', { class: 'card chart', 'aria-labelledby': 'chart-title' },
-    h('h2', { class: 'chart__title', id: 'chart-title' }, 'Часы бронирования по помещениям'),
+    h('div', { class: 'chart__head' },
+      h('h2', { class: 'chart__title', id: 'chart-title' }, 'Часы бронирования по помещениям'),
+      h('button', { class: 'btn btn--ghost', type: 'button', onclick: downloadCsv }, 'Скачать CSV')),
     h('div', { class: 'bars', role: 'table', 'aria-label': 'Часы бронирования по помещениям' },
       rows.map((row) => {
         const bookingsText = `${row.bookings} ${plural(row.bookings, 'бронь', 'брони', 'броней')}`;
-        return h('div', { class: 'bar', role: 'row', title: `${row.name}: ${formatNumber(row.hours)} ч, ${bookingsText}` },
-          h('span', { class: 'bar__label', role: 'rowheader' }, row.name),
+        return h('div', { class: 'bar', role: 'row', title: `${row.name} (${row.building}): ${formatNumber(row.hours)} ч, ${bookingsText}` },
+          h('span', { class: 'bar__label', role: 'rowheader' }, row.name, h('span', { class: 'bar__building' }, row.building)),
           h('span', { class: 'bar__track', role: 'cell', 'aria-hidden': 'true' },
             row.hours > 0 && h('span', { class: 'bar__fill', style: `width:${(row.hours / max) * 100}%` })),
           h('span', { class: 'bar__value', role: 'cell' },

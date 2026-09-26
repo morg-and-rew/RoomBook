@@ -1,107 +1,86 @@
-using Microsoft.EntityFrameworkCore;
 using RoomBook.Api.Common;
-using RoomBook.Api.Data;
-using RoomBook.Api.Dtos;
 using RoomBook.Api.Entities;
+using RoomBook.Api.Repositories;
 
 namespace RoomBook.Api.Services;
 
 public class RoomService : IRoomService
 {
-    private readonly AppDbContext _db;
+    private readonly IRoomRepository _roomRepository;
+    private readonly IEquipmentRepository _equipmentRepository;
 
-    public RoomService(AppDbContext db)
+    public RoomService(IRoomRepository roomRepository, IEquipmentRepository equipmentRepository)
     {
-        _db = db;
+        _roomRepository = roomRepository;
+        _equipmentRepository = equipmentRepository;
     }
 
-    /// <summary>
-    /// Возвращает активные помещения. Если передана дата, для каждого
-    /// помещения дополнительно возвращаются занятые интервалы на сутки,
-    /// начиная с этого момента (отдельным запросом по броням) — по ним UI
-    /// показывает занятость (ФТ1). "2026-10-01" — сутки по UTC,
-    /// "2026-10-01T00:00:00+03:00" — сутки по московскому времени.
-    /// </summary>
-    public async Task<IReadOnlyList<RoomDto>> GetAllAsync(DateTime? date, int? capacity, string[]? equipment)
+    public async Task<IReadOnlyList<Room>> ListRoomsAsync(RoomFilter filters)
     {
-        var query = _db.Rooms.Where(r => r.IsActive).AsQueryable();
+        var rooms = await _roomRepository.FindAvailableAsync(filters.Capacity, filters.EquipmentCodes, filters.Date);
+        return string.IsNullOrWhiteSpace(filters.Building)
+            ? rooms
+            : rooms.Where(r => r.Building == filters.Building.Trim()).ToList();
+    }
 
-        if (capacity is > 0)
+    public async Task<Room> GetRoomAsync(long id) =>
+        await _roomRepository.FindByIdAsync(id) ?? throw ApiException.NotFound("Помещение не найдено.");
+
+    public async Task<Room> CreateRoomAsync(RoomData data)
+    {
+        await EnsureNameIsFreeAsync(data, roomId: null);
+        var room = new Room(data.Name, data.Building, data.Floor, data.Capacity, data.Description);
+        await ApplyEquipmentAsync(room, data.EquipmentCodes);
+        return await _roomRepository.SaveAsync(room);
+    }
+
+    public async Task<Room> UpdateRoomAsync(long id, RoomData data)
+    {
+        var room = await GetRoomAsync(id);
+        await EnsureNameIsFreeAsync(data, room.Id);
+        room.Update(data.Name, data.Building, data.Floor, data.Capacity, data.Description);
+        await ApplyEquipmentAsync(room, data.EquipmentCodes);
+        return await _roomRepository.SaveAsync(room);
+    }
+
+    public async Task DeactivateRoomAsync(long id)
+    {
+        var room = await GetRoomAsync(id);
+        room.Deactivate();
+        await _roomRepository.SaveAsync(room);
+    }
+
+    public Task<IReadOnlyList<Equipment>> ListEquipmentAsync() => _equipmentRepository.FindAllAsync();
+
+    /// <summary>В одном корпусе не может быть двух активных помещений с одинаковым названием.</summary>
+    private async Task EnsureNameIsFreeAsync(RoomData data, long? roomId)
+    {
+        var sameBuilding = await _roomRepository.FindByBuildingAsync(data.Building.Trim());
+        var duplicate = sameBuilding.Any(r => r.IsActive && r.Id != roomId
+            && string.Equals(r.Name, data.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (duplicate)
         {
-            query = query.Where(r => r.Capacity >= capacity);
+            throw ApiException.Conflict($"В корпусе «{data.Building.Trim()}» уже есть помещение «{data.Name.Trim()}».");
+        }
+    }
+
+    /// <summary>Приводит оснащение помещения к списку кодов из справочника.</summary>
+    private async Task ApplyEquipmentAsync(Room room, IReadOnlyCollection<string> codes)
+    {
+        var wanted = await _equipmentRepository.FindByCodesAsync(codes.Distinct().ToList());
+        var unknown = codes.Except(wanted.Select(e => e.Code)).ToList();
+        if (unknown.Count > 0)
+        {
+            throw new DomainException($"Неизвестное оборудование: {string.Join(", ", unknown)}.");
         }
 
-        if (equipment is { Length: > 0 })
+        foreach (var eq in room.EquipmentItems.ToList())
         {
-            foreach (var item in equipment)
-            {
-                var needed = item;
-                query = query.Where(r => r.Equipment.Contains(needed));
-            }
+            if (wanted.All(w => w.Id != eq.Id)) room.RemoveEquipment(eq);
         }
-
-        var rooms = await query.OrderBy(r => r.Name).ToListAsync();
-
-        if (date is null)
+        foreach (var eq in wanted)
         {
-            return rooms.Select(r => ToDto(r)).ToList();
+            room.AddEquipment(eq);
         }
-
-        var dayStart = date.Value.AsUtc();
-        var dayEnd = dayStart.AddDays(1);
-        var roomIds = rooms.Select(r => r.Id).ToList();
-
-        var bookings = await _db.Bookings
-            .Where(b => roomIds.Contains(b.RoomId) &&
-                        (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Approved) &&
-                        b.StartTime < dayEnd && b.EndTime > dayStart)
-            .OrderBy(b => b.StartTime)
-            .ToListAsync();
-
-        var slotsByRoom = bookings.ToLookup(b => b.RoomId,
-            b => new RoomBusySlotDto(b.StartTime, b.EndTime, b.Status.ToString()));
-
-        return rooms.Select(r => ToDto(r, slotsByRoom[r.Id].ToList())).ToList();
     }
-
-    public async Task<RoomDto> CreateAsync(RoomCreateDto dto)
-    {
-        var room = new Room
-        {
-            Name = dto.Name.Trim(),
-            Capacity = dto.Capacity,
-            Equipment = dto.Equipment ?? Array.Empty<string>()
-        };
-
-        _db.Rooms.Add(room);
-        await _db.SaveChangesAsync();
-        return ToDto(room);
-    }
-
-    public async Task<RoomDto> UpdateAsync(Guid id, RoomUpdateDto dto)
-    {
-        var room = await _db.Rooms.FindAsync(id)
-            ?? throw ApiException.NotFound("Помещение не найдено.");
-
-        room.Name = dto.Name.Trim();
-        room.Capacity = dto.Capacity;
-        room.Equipment = dto.Equipment ?? Array.Empty<string>();
-        room.IsActive = dto.IsActive;
-
-        await _db.SaveChangesAsync();
-        return ToDto(room);
-    }
-
-    /// <summary>Мягкое удаление — помещение скрывается из выдачи, но история броней сохраняется.</summary>
-    public async Task DeleteAsync(Guid id)
-    {
-        var room = await _db.Rooms.FindAsync(id)
-            ?? throw ApiException.NotFound("Помещение не найдено.");
-
-        room.IsActive = false;
-        await _db.SaveChangesAsync();
-    }
-
-    private static RoomDto ToDto(Room r, IReadOnlyList<RoomBusySlotDto>? busySlots = null) =>
-        new(r.Id, r.Name, r.Capacity, r.Equipment, r.IsActive, busySlots);
 }

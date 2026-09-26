@@ -3,9 +3,9 @@ using System.ComponentModel.DataAnnotations;
 namespace RoomBook.Api.Dtos;
 
 public record BookingCreateDto(
-    [Required] Guid RoomId,
-    [Required] DateTime StartTime,
-    [Required] DateTime EndTime,
+    [Range(1, long.MaxValue)] long RoomId,
+    [Required] DateTime StartAt,
+    [Required] DateTime EndAt,
     [MaxLength(500)] string? Purpose
 );
 
@@ -14,15 +14,17 @@ public record BookingRejectDto(
 );
 
 public record BookingDto(
-    Guid Id,
-    Guid RoomId,
+    long Id,
+    long RoomId,
     string RoomName,
-    Guid UserId,
+    long UserId,
     string UserFullName,
-    DateTime StartTime,
-    DateTime EndTime,
     string Purpose,
+    DateTime StartAt,
+    DateTime EndAt,
     string Status,
-    string? RejectionReason,
+    string? RejectReason,
+    DateTime? DecidedAt,
+    string? DecidedByName,
     DateTime CreatedAt
 );

@@ -13,60 +13,68 @@ namespace RoomBook.Api.Controllers;
 public class BookingsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
+    private readonly IRoomService _roomService;
+    private readonly IUserService _userService;
 
-    public BookingsController(IBookingService bookingService)
+    public BookingsController(IBookingService bookingService, IRoomService roomService, IUserService userService)
     {
         _bookingService = bookingService;
+        _roomService = roomService;
+        _userService = userService;
     }
 
-    /// <summary>US4/US11: создание брони с проверкой конфликтов.</summary>
+    /// <summary>US4/US11: создание заявки с проверкой пересечений.</summary>
     [HttpPost]
     public async Task<ActionResult<BookingDto>> Create(BookingCreateDto dto)
     {
-        var booking = await _bookingService.CreateAsync(User.GetUserId(), dto);
-        return CreatedAtAction(nameof(GetMy), new { }, booking);
+        var user = await CurrentUserAsync();
+        var room = await _roomService.GetRoomAsync(dto.RoomId);
+        var booking = await _bookingService.CreateBookingAsync(user, room, dto.StartAt, dto.EndAt, dto.Purpose);
+        return CreatedAtAction(nameof(GetMy), new { }, booking.ToDto());
     }
 
-    /// <summary>US5: список собственных заявок пользователя.</summary>
+    /// <summary>US5: заявки текущего пользователя.</summary>
     [HttpGet("my")]
     public async Task<ActionResult<IReadOnlyList<BookingDto>>> GetMy()
     {
-        var bookings = await _bookingService.GetMyBookingsAsync(User.GetUserId());
-        return Ok(bookings);
+        var bookings = await _bookingService.ListUserBookingsAsync(await CurrentUserAsync());
+        return Ok(bookings.Select(b => b.ToDto()).ToList());
     }
 
-    /// <summary>US9: все заявки для администратора, с фильтром по статусу (Pending, Approved, ...).</summary>
+    /// <summary>US9: все заявки для администратора, с фильтром по статусу.</summary>
     [HttpGet]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IReadOnlyList<BookingDto>>> GetAll([FromQuery] BookingStatus? status)
     {
-        var bookings = await _bookingService.GetAllAsync(status);
-        return Ok(bookings);
+        var bookings = await _bookingService.ListAllBookingsAsync(status);
+        return Ok(bookings.Select(b => b.ToDto()).ToList());
     }
 
-    /// <summary>US6: отмена собственной заявки.</summary>
-    [HttpDelete("{id:guid}")]
-    public async Task<ActionResult<BookingDto>> Cancel(Guid id)
+    /// <summary>US6: отмена заявки — автором или администратором.</summary>
+    [HttpDelete("{id:long}")]
+    public async Task<ActionResult<BookingDto>> Cancel(long id)
     {
-        var booking = await _bookingService.CancelAsync(User.GetUserId(), id);
-        return Ok(booking);
+        var booking = await _bookingService.CancelBookingAsync(id, await CurrentUserAsync());
+        return Ok(booking.ToDto());
     }
 
     /// <summary>US9: подтверждение заявки администратором.</summary>
-    [HttpPut("{id:guid}/approve")]
+    [HttpPut("{id:long}/confirm")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<BookingDto>> Approve(Guid id)
+    public async Task<ActionResult<BookingDto>> Confirm(long id)
     {
-        var booking = await _bookingService.ApproveAsync(id);
-        return Ok(booking);
+        var booking = await _bookingService.ConfirmBookingAsync(id, await CurrentUserAsync());
+        return Ok(booking.ToDto());
     }
 
     /// <summary>US9: отклонение заявки администратором с указанием причины.</summary>
-    [HttpPut("{id:guid}/reject")]
+    [HttpPut("{id:long}/reject")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<BookingDto>> Reject(Guid id, BookingRejectDto dto)
+    public async Task<ActionResult<BookingDto>> Reject(long id, BookingRejectDto dto)
     {
-        var booking = await _bookingService.RejectAsync(id, dto.Reason);
-        return Ok(booking);
+        var booking = await _bookingService.RejectBookingAsync(id, await CurrentUserAsync(), dto.Reason);
+        return Ok(booking.ToDto());
     }
+
+    private Task<Entities.User> CurrentUserAsync() => _userService.GetByIdAsync(User.GetUserId());
 }

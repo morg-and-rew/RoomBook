@@ -8,8 +8,12 @@ import {
 import { refreshNotificationBadge } from './notifications.js';
 
 // Фильтры сохраняются при переходах между разделами.
-const filters = { date: toDateInput(new Date()), capacity: '', equipment: new Set() };
-let knownEquipment = [];
+const filters = { date: toDateInput(new Date()), capacity: '', building: '', equipment: new Set() };
+let catalog = [];          // справочник оборудования: [{ id, code, name }]
+let knownBuildings = [];   // корпуса из списка помещений без фильтров
+
+const places = (n) => `${n} ${plural(n, 'место', 'места', 'мест')}`;
+const roomLocation = (room) => `${room.building}, ${room.floor} этаж`;
 
 export function roomsPage(view, { user }) {
   const isAdmin = user?.role === 'Admin';
@@ -19,6 +23,12 @@ export function roomsPage(view, { user }) {
   const grid = h('div', { class: 'room-grid' });
   const summary = h('p', { class: 'results-note' });
   const chips = h('div', { class: 'chips' });
+  const buildingSelect = h('select', {
+    onchange: () => {
+      filters.building = buildingSelect.value;
+      load();
+    },
+  });
 
   const dateInput = h('input', {
     type: 'date',
@@ -57,28 +67,35 @@ export function roomsPage(view, { user }) {
     h('section', { class: 'card filters', 'aria-label': 'Фильтры' },
       field('Дата', dateInput),
       field('Вместимость, от', capacityInput),
+      field('Корпус', buildingSelect),
       h('div', { class: 'field filters__equipment' }, h('span', { class: 'field__label' }, 'Оборудование'), chips)),
     summary,
     grid);
 
-  renderChips();
+  renderFilters();
   load();
 
   async function load() {
     const id = ++loadId;
     grid.replaceChildren(...skeleton(3));
     try {
-      const rooms = await api.rooms({
-        date: startOfDay(filters.date).toISOString(),
-        capacity: filters.capacity || undefined,
-        equipment: [...filters.equipment],
-      });
+      const noFilters = !filters.capacity && !filters.building && filters.equipment.size === 0;
+      const [rooms, equipment] = await Promise.all([
+        api.rooms({
+          date: startOfDay(filters.date).toISOString(),
+          capacity: filters.capacity || undefined,
+          building: filters.building || undefined,
+          equipment: [...filters.equipment],
+        }),
+        catalog.length ? catalog : api.equipment(),
+      ]);
       if (id !== loadId || !view.isConnected) return;
 
-      if (!filters.capacity && filters.equipment.size === 0) {
-        knownEquipment = [...new Set(rooms.flatMap((room) => room.equipment))].sort((a, b) => a.localeCompare(b, 'ru'));
+      catalog = equipment;
+      if (noFilters) {
+        knownBuildings = [...new Set(rooms.map((room) => room.building))].sort((a, b) => a.localeCompare(b, 'ru'));
       }
-      renderChips();
+      renderFilters();
       summary.textContent = rooms.length
         ? `${rooms.length} ${plural(rooms.length, 'помещение', 'помещения', 'помещений')} · ${formatDay(startOfDay(filters.date))}`
         : '';
@@ -88,37 +105,43 @@ export function roomsPage(view, { user }) {
     }
   }
 
-  function renderChips() {
-    const names = [...new Set([...knownEquipment, ...filters.equipment])];
-    chips.replaceChildren(...(names.length
-      ? names.map((name) => {
-        const active = filters.equipment.has(name);
+  function renderFilters() {
+    const buildings = [...new Set([...knownBuildings, filters.building].filter(Boolean))];
+    buildingSelect.replaceChildren(
+      h('option', { value: '' }, 'Все корпуса'),
+      buildings.map((b) => h('option', { value: b }, b)));
+    buildingSelect.value = filters.building;
+
+    chips.replaceChildren(...(catalog.length
+      ? catalog.map((eq) => {
+        const active = filters.equipment.has(eq.code);
         return h('button', {
           class: `chip${active ? ' is-active' : ''}`,
           type: 'button',
           'aria-pressed': String(active),
           onclick: () => {
-            if (active) filters.equipment.delete(name);
-            else filters.equipment.add(name);
-            renderChips();
+            if (active) filters.equipment.delete(eq.code);
+            else filters.equipment.add(eq.code);
+            renderFilters();
             load();
           },
-        }, name);
+        }, eq.name);
       })
-      : [h('span', { class: 'muted small' }, 'Появится, когда у помещений будет оборудование')]));
+      : [h('span', { class: 'muted small' }, 'Загрузка…')]));
   }
 
   function emptyRooms() {
-    if (filters.capacity || filters.equipment.size) {
+    if (filters.capacity || filters.building || filters.equipment.size) {
       return emptyState('search', 'Ничего не найдено', 'Под выбранные фильтры не подходит ни одно помещение.',
         h('button', {
           class: 'btn btn--ghost',
           type: 'button',
           onclick: () => {
             filters.capacity = '';
+            filters.building = '';
             filters.equipment.clear();
             capacityInput.value = '';
-            renderChips();
+            renderFilters();
             load();
           },
         }, 'Сбросить фильтры'));
@@ -134,15 +157,17 @@ export function roomsPage(view, { user }) {
     const isPastDay = filters.date < toDateInput(new Date());
     return h('article', { class: 'card room' },
       h('header', { class: 'room__head' },
-        h('h3', { class: 'room__name' }, room.name),
-        h('span', { class: 'room__capacity', title: 'Вместимость' },
-          icon('users'), `${room.capacity} ${plural(room.capacity, 'место', 'места', 'мест')}`)),
+        h('div', {},
+          h('h3', { class: 'room__name' }, room.name),
+          h('p', { class: 'room__location' }, roomLocation(room))),
+        h('span', { class: 'room__capacity', title: 'Вместимость' }, icon('users'), places(room.capacity))),
+      room.description && h('p', { class: 'room__description' }, room.description),
       h('div', { class: 'tags' }, room.equipment.length
-        ? room.equipment.map((item) => h('span', { class: 'tag' }, item))
+        ? room.equipment.map((eq) => h('span', { class: 'tag' }, eq.name))
         : h('span', { class: 'muted small' }, 'Без оборудования')),
       timeline(filters.date, slots),
       h('p', { class: `room__status${slots.length ? '' : ' is-free'}` }, slots.length
-        ? `Занято: ${slots.map((slot) => `${formatTime(slot.startTime)}–${formatTime(slot.endTime)}`).join(', ')}`
+        ? `Занято: ${slots.map((slot) => `${formatTime(slot.startAt)}–${formatTime(slot.endAt)}`).join(', ')}`
         : 'Свободно весь день'),
       h('footer', { class: 'room__actions' },
         h('button', {
@@ -158,7 +183,7 @@ export function roomsPage(view, { user }) {
         }, icon('edit')),
         isAdmin && h('button', {
           class: 'icon-btn icon-btn--danger', type: 'button', title: 'Скрыть', 'aria-label': `Скрыть «${room.name}»`,
-          onclick: () => hideRoom(room),
+          onclick: () => deactivateRoom(room),
         }, icon('trash'))));
   }
 
@@ -167,13 +192,13 @@ export function roomsPage(view, { user }) {
     openBookingDialog(room, filters.date, reload);
   }
 
-  async function hideRoom(room) {
+  async function deactivateRoom(room) {
     const confirmed = await confirmDialog('Скрыть помещение?',
       `«${room.name}» пропадёт из списка и станет недоступно для бронирования. История броней сохранится.`,
       { confirmText: 'Скрыть', danger: true });
     if (!confirmed) return;
     try {
-      await api.deleteRoom(room.id);
+      await api.deactivateRoom(room.id);
       toast(`Помещение «${room.name}» скрыто`);
       reload();
     } catch (err) {
@@ -211,7 +236,7 @@ function openBookingDialog(room, dateStr, onDone) {
     const daySlots = slotsDate === day ? slots : [];
     const range = selection();
     const conflict = Boolean(range) && daySlots.some((slot) =>
-      new Date(slot.startTime) < range.end && new Date(slot.endTime) > range.start);
+      new Date(slot.startAt) < range.end && new Date(slot.endAt) > range.start);
     // replaceChildren превратил бы false в текст «false», поэтому пустые элементы отбрасываем.
     preview.replaceChildren(...[
       timeline(day, daySlots, { selection: range, conflict }),
@@ -261,8 +286,8 @@ function openBookingDialog(room, dateStr, onDone) {
         try {
           await api.createBooking({
             roomId: room.id,
-            startTime: range.start.toISOString(),
-            endTime: range.end.toISOString(),
+            startAt: range.start.toISOString(),
+            endAt: range.end.toISOString(),
             purpose: purposeInput.value.trim() || null,
           });
           dialog.close();
@@ -276,8 +301,9 @@ function openBookingDialog(room, dateStr, onDone) {
     },
   },
     h('div', { class: 'booking-summary' },
-      h('span', { class: 'room__capacity' }, icon('users'), `${room.capacity} ${plural(room.capacity, 'место', 'места', 'мест')}`),
-      room.equipment.map((item) => h('span', { class: 'tag' }, item))),
+      h('span', { class: 'room__capacity' }, icon('users'), places(room.capacity)),
+      h('span', { class: 'room__location' }, roomLocation(room)),
+      room.equipment.map((eq) => h('span', { class: 'tag' }, eq.name))),
     error,
     h('div', { class: 'form__row' },
       field('Дата', dateInput),
@@ -296,31 +322,47 @@ function openBookingDialog(room, dateStr, onDone) {
 function openRoomDialog(room, onDone) {
   const isEdit = Boolean(room);
   const name = h('input', { required: true, maxlength: 200, placeholder: 'Переговорная «Байкал»', value: room?.name ?? '' });
+  const building = h('input', { required: true, maxlength: 100, list: 'room-buildings', placeholder: 'Корпус А', value: room?.building ?? '' });
+  const floor = h('input', { type: 'number', required: true, min: -5, max: 200, value: room?.floor ?? 1 });
   const capacity = h('input', { type: 'number', required: true, min: 1, max: 1000, value: room?.capacity ?? 10 });
-  const equipment = h('input', { placeholder: 'Проектор, Доска, Видеосвязь', value: room?.equipment.join(', ') ?? '' });
+  const description = h('textarea', { rows: 2, maxlength: 1000, placeholder: 'Например: окна во двор, есть кондиционер', value: room?.description ?? '' });
   const error = errorBox();
   const submit = h('button', { class: 'btn btn--primary', type: 'submit' }, isEdit ? 'Сохранить' : 'Добавить');
 
-  const parseEquipment = () => [...new Set(equipment.value.split(',').map((item) => item.trim()).filter(Boolean))];
-  const suggestions = knownEquipment.length > 0 && h('div', { class: 'chips chips--small' },
-    knownEquipment.map((item) => h('button', {
-      class: 'chip',
+  // Оборудование выбирается из справочника (таблица equipment).
+  const selected = new Set(room?.equipment.map((eq) => eq.code) ?? []);
+  const equipmentChips = h('div', { class: 'chips' });
+  const renderEquipment = () => equipmentChips.replaceChildren(...catalog.map((eq) => {
+    const active = selected.has(eq.code);
+    return h('button', {
+      class: `chip${active ? ' is-active' : ''}`,
       type: 'button',
+      'aria-pressed': String(active),
       onclick: () => {
-        const items = parseEquipment();
-        if (!items.includes(item)) equipment.value = [...items, item].join(', ');
+        if (active) selected.delete(eq.code);
+        else selected.add(eq.code);
+        renderEquipment();
       },
-    }, `+ ${item}`)));
+    }, eq.name);
+  }));
+  renderEquipment();
 
   const form = h('form', {
     class: 'form',
     onsubmit: async (event) => {
       event.preventDefault();
       error.hidden = true;
-      const payload = { name: name.value.trim(), capacity: Number(capacity.value), equipment: parseEquipment() };
+      const payload = {
+        name: name.value.trim(),
+        building: building.value.trim(),
+        floor: Number(floor.value),
+        capacity: Number(capacity.value),
+        description: description.value.trim() || null,
+        equipmentCodes: [...selected],
+      };
       await withBusy(submit, async () => {
         try {
-          if (isEdit) await api.updateRoom(room.id, { ...payload, isActive: true });
+          if (isEdit) await api.updateRoom(room.id, payload);
           else await api.createRoom(payload);
           dialog.close();
           toast(isEdit ? 'Изменения сохранены' : `Помещение «${payload.name}» добавлено`);
@@ -333,13 +375,17 @@ function openRoomDialog(room, onDone) {
   },
     error,
     field('Название', name),
-    field('Вместимость, человек', capacity),
-    field('Оборудование', equipment, 'Через запятую'),
-    suggestions,
+    h('div', { class: 'form__row form__row--room' },
+      field('Корпус', building),
+      field('Этаж', floor),
+      field('Вместимость', capacity)),
+    h('datalist', { id: 'room-buildings' }, knownBuildings.map((b) => h('option', { value: b }))),
+    field('Описание', description),
+    h('div', { class: 'field' }, h('span', { class: 'field__label' }, 'Оборудование'), equipmentChips),
     h('div', { class: 'dialog__actions' },
       h('button', { class: 'btn btn--ghost', type: 'button', onclick: () => dialog.close() }, 'Отмена'),
       submit));
 
-  const dialog = openDialog(isEdit ? 'Изменить помещение' : 'Новое помещение', form);
+  const dialog = openDialog(isEdit ? 'Изменить помещение' : 'Новое помещение', form, { wide: true });
   name.focus();
 }

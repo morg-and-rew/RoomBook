@@ -1,13 +1,13 @@
 import { api } from '../api.js';
 import {
   h, icon, toast, confirmDialog, pageHeader, tabs, emptyState, errorState, skeleton,
-  statusBadge, dateTile, formatTime, formatRange,
+  statusBadge, dateTile, formatTime, formatRange, timeAgo,
 } from '../ui.js';
 
 let activeTab = 'upcoming';
 
 const isUpcoming = (booking) =>
-  (booking.status === 'Pending' || booking.status === 'Approved') && new Date(booking.endTime) > new Date();
+  (booking.status === 'Pending' || booking.status === 'Confirmed') && new Date(booking.endAt) > new Date();
 
 export function myBookingsPage(view) {
   const tabsHost = h('div');
@@ -28,8 +28,8 @@ export function myBookingsPage(view) {
   }
 
   function render() {
-    const upcoming = bookings.filter(isUpcoming).sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-    const all = [...bookings].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+    const upcoming = bookings.filter(isUpcoming).sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    const all = [...bookings].sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
     tabsHost.replaceChildren(tabs([
       { id: 'upcoming', label: 'Предстоящие', count: upcoming.length },
       { id: 'all', label: 'Все', count: all.length },
@@ -48,21 +48,23 @@ export function myBookingsPage(view) {
 
   function bookingRow(booking) {
     const canCancel = isUpcoming(booking);
-    const isPast = new Date(booking.endTime) < new Date();
+    const isPast = new Date(booking.endAt) < new Date();
     return h('article', { class: `card booking${isPast ? ' is-past' : ''}` },
-      dateTile(booking.startTime),
+      dateTile(booking.startAt),
       h('div', { class: 'booking__body' },
         h('div', { class: 'booking__title' }, h('h3', {}, booking.roomName), statusBadge(booking.status)),
-        h('p', { class: 'booking__meta' }, icon('clock'), `${formatTime(booking.startTime)}–${formatTime(booking.endTime)}`),
+        h('p', { class: 'booking__meta' }, icon('clock'), `${formatTime(booking.startAt)}–${formatTime(booking.endAt)}`),
         booking.purpose && h('p', { class: 'booking__purpose' }, booking.purpose),
-        booking.rejectionReason && h('p', { class: 'booking__reason' }, `Причина отказа: ${booking.rejectionReason}`)),
+        booking.rejectReason && h('p', { class: 'booking__reason' }, `Причина отказа: ${booking.rejectReason}`),
+        booking.decidedAt && h('p', { class: 'booking__created' },
+          `Решение: ${booking.decidedByName ?? 'администратор'}, ${timeAgo(booking.decidedAt)}`)),
       canCancel && h('div', { class: 'booking__actions' },
         h('button', { class: 'btn btn--ghost btn--danger-text', type: 'button', onclick: () => cancel(booking) }, 'Отменить')));
   }
 
   async function cancel(booking) {
     const confirmed = await confirmDialog('Отменить бронь?',
-      `${booking.roomName}, ${formatRange(booking.startTime, booking.endTime)}. Отменённую заявку нельзя восстановить.`,
+      `${booking.roomName}, ${formatRange(booking.startAt, booking.endAt)}. Отменённую заявку нельзя восстановить.`,
       { confirmText: 'Отменить бронь', danger: true });
     if (!confirmed) return;
     try {

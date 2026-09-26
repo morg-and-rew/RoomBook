@@ -1,181 +1,86 @@
-using System.Data;
-using Microsoft.EntityFrameworkCore;
 using RoomBook.Api.Common;
-using RoomBook.Api.Data;
-using RoomBook.Api.Dtos;
 using RoomBook.Api.Entities;
+using RoomBook.Api.Repositories;
 
 namespace RoomBook.Api.Services;
 
 public class BookingService : IBookingService
 {
-    private readonly AppDbContext _db;
-    private readonly INotificationService _notifications;
+    private readonly IBookingRepository _bookingRepository;
+    private readonly INotificationService _notifier;
 
-    public BookingService(AppDbContext db, INotificationService notifications)
+    public BookingService(IBookingRepository bookingRepository, INotificationService notifier)
     {
-        _db = db;
-        _notifications = notifications;
+        _bookingRepository = bookingRepository;
+        _notifier = notifier;
     }
 
     /// <summary>
-    /// Создание заявки на бронирование (ФТ4) с проверкой пересечения
-    /// по времени (ФТ5, US11). Проверка и вставка выполняются в одной
-    /// транзакции с уровнем изоляции Serializable, чтобы исключить
-    /// состояние гонки при одновременных заявках на одно и то же время
-    /// (НФТ3) — вторая параллельная транзакция получит ошибку сериализации
-    /// и будет отклонена как конфликтующая.
+    /// Создание заявки (ФТ4) с проверкой пересечений (ФТ5, US11). Проверка здесь даёт
+    /// понятный ответ в обычном случае; одновременные заявки на одно время отсекает
+    /// ограничение-исключение в БД (НФТ3), см. BookingRepository.SaveAsync.
     /// </summary>
-    public async Task<BookingDto> CreateAsync(Guid userId, BookingCreateDto dto)
+    public async Task<Booking> CreateBookingAsync(User user, Room room, DateTime startAt, DateTime endAt, string? purpose)
     {
-        var startTime = dto.StartTime.AsUtc();
-        var endTime = dto.EndTime.AsUtc();
+        var booking = new Booking(user, room, startAt.AsUtc(), endAt.AsUtc(), purpose);
 
-        if (endTime <= startTime)
-        {
-            throw new ApiException("Время окончания должно быть позже времени начала.");
-        }
-
-        var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == dto.RoomId && r.IsActive)
-            ?? throw ApiException.NotFound("Помещение не найдено или недоступно для бронирования.");
-
-        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
-
-        var hasConflict = await _db.Bookings.AnyAsync(b =>
-            b.RoomId == dto.RoomId &&
-            (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Approved) &&
-            b.StartTime < endTime &&
-            b.EndTime > startTime);
-
-        if (hasConflict)
+        var conflicts = await FindConflictsAsync(room, booking.StartAt, booking.EndAt);
+        if (conflicts.Count > 0)
         {
             throw ApiException.Conflict("Помещение уже забронировано на пересекающееся время.");
         }
 
-        var booking = new Booking
-        {
-            RoomId = dto.RoomId,
-            UserId = userId,
-            StartTime = startTime,
-            EndTime = endTime,
-            Purpose = dto.Purpose ?? string.Empty,
-            Status = BookingStatus.Pending
-        };
-
-        _db.Bookings.Add(booking);
-        await _db.SaveChangesAsync();
-        await transaction.CommitAsync();
-
-        await _notifications.NotifyAsync(userId, $"Заявка на бронирование «{room.Name}» создана и ожидает подтверждения.");
-
-        booking.Room = room;
-        return await MapToDto(booking);
-    }
-
-    public async Task<IReadOnlyList<BookingDto>> GetMyBookingsAsync(Guid userId)
-    {
-        var bookings = await _db.Bookings
-            .Include(b => b.Room)
-            .Include(b => b.User)
-            .Where(b => b.UserId == userId)
-            .OrderByDescending(b => b.CreatedAt)
-            .ToListAsync();
-
-        return bookings.Select(ToDto).ToList();
-    }
-
-    public async Task<IReadOnlyList<BookingDto>> GetAllAsync(BookingStatus? status)
-    {
-        var query = _db.Bookings
-            .Include(b => b.Room)
-            .Include(b => b.User)
-            .AsQueryable();
-
-        if (status is not null)
-        {
-            query = query.Where(b => b.Status == status);
-        }
-
-        var bookings = await query.OrderByDescending(b => b.CreatedAt).ToListAsync();
-        return bookings.Select(ToDto).ToList();
-    }
-
-    public async Task<BookingDto> CancelAsync(Guid userId, Guid bookingId)
-    {
-        var booking = await _db.Bookings.Include(b => b.Room).Include(b => b.User)
-            .FirstOrDefaultAsync(b => b.Id == bookingId)
-            ?? throw ApiException.NotFound("Заявка не найдена.");
-
-        if (booking.UserId != userId)
-        {
-            throw ApiException.Forbidden("Нельзя отменить чужую заявку.");
-        }
-
-        if (booking.Status is BookingStatus.Cancelled or BookingStatus.Rejected)
-        {
-            throw new ApiException("Заявка уже отменена или отклонена.");
-        }
-
-        booking.Status = BookingStatus.Cancelled;
-        booking.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        return ToDto(booking);
-    }
-
-    public async Task<BookingDto> ApproveAsync(Guid bookingId)
-    {
-        var booking = await GetForAdminAction(bookingId);
-
-        booking.Status = BookingStatus.Approved;
-        booking.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        await _notifications.NotifyAsync(booking.UserId,
-            $"Ваша заявка на «{booking.Room!.Name}» подтверждена администратором.");
-
-        return ToDto(booking);
-    }
-
-    public async Task<BookingDto> RejectAsync(Guid bookingId, string? reason)
-    {
-        var booking = await GetForAdminAction(bookingId);
-
-        booking.Status = BookingStatus.Rejected;
-        booking.RejectionReason = reason;
-        booking.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-
-        var reasonSuffix = string.IsNullOrWhiteSpace(reason) ? string.Empty : $" Причина: {reason}.";
-        await _notifications.NotifyAsync(booking.UserId,
-            $"Ваша заявка на «{booking.Room!.Name}» отклонена.{reasonSuffix}");
-
-        return ToDto(booking);
-    }
-
-    private async Task<Booking> GetForAdminAction(Guid bookingId)
-    {
-        var booking = await _db.Bookings.Include(b => b.Room).Include(b => b.User)
-            .FirstOrDefaultAsync(b => b.Id == bookingId)
-            ?? throw ApiException.NotFound("Заявка не найдена.");
-
-        if (booking.Status != BookingStatus.Pending)
-        {
-            throw new ApiException("Решение можно принять только по заявке в статусе «Ожидает подтверждения».");
-        }
-
+        await _bookingRepository.SaveAsync(booking);
+        await _notifier.NotifyStatusChangeAsync(booking, NotificationType.Created);
         return booking;
     }
 
-    private async Task<BookingDto> MapToDto(Booking booking)
+    public async Task<Booking> ConfirmBookingAsync(long bookingId, User admin)
     {
-        booking.User ??= await _db.Users.FindAsync(booking.UserId);
-        return ToDto(booking);
+        var booking = await GetAsync(bookingId);
+
+        // Страховка: подтверждаемая заявка не должна пересекаться с другой активной.
+        var active = await _bookingRepository.FindActiveByRoomAsync(booking.Room);
+        if (active.Any(other => other.Id != booking.Id && other.OverlapsWith(booking)))
+        {
+            throw ApiException.Conflict("На это время уже есть другая активная заявка.");
+        }
+
+        booking.Confirm(admin);
+        await _bookingRepository.SaveAsync(booking);
+        await _notifier.NotifyStatusChangeAsync(booking, NotificationType.Confirmed);
+        return booking;
     }
 
-    private static BookingDto ToDto(Booking b) => new(
-        b.Id, b.RoomId, b.Room?.Name ?? string.Empty,
-        b.UserId, b.User?.FullName ?? string.Empty,
-        b.StartTime, b.EndTime, b.Purpose,
-        b.Status.ToString(), b.RejectionReason, b.CreatedAt);
+    public async Task<Booking> RejectBookingAsync(long bookingId, User admin, string? reason)
+    {
+        var booking = await GetAsync(bookingId);
+        booking.Reject(admin, reason);
+        await _bookingRepository.SaveAsync(booking);
+        await _notifier.NotifyStatusChangeAsync(booking, NotificationType.Rejected);
+        return booking;
+    }
+
+    public async Task<Booking> CancelBookingAsync(long bookingId, User by)
+    {
+        var booking = await GetAsync(bookingId);
+        booking.Cancel(by);
+        await _bookingRepository.SaveAsync(booking);
+        await _notifier.NotifyStatusChangeAsync(booking, NotificationType.Cancelled);
+        return booking;
+    }
+
+    /// <summary>Активные заявки на помещение, пересекающиеся с периодом.</summary>
+    public async Task<IReadOnlyList<Booking>> FindConflictsAsync(Room room, DateTime startAt, DateTime endAt)
+    {
+        var bookings = await _bookingRepository.FindByRoomAndPeriodAsync(room, startAt.AsUtc(), endAt.AsUtc());
+        return bookings.Where(b => b.IsActive()).ToList();
+    }
+
+    public Task<IReadOnlyList<Booking>> ListUserBookingsAsync(User user) => _bookingRepository.FindByUserAsync(user);
+
+    public Task<IReadOnlyList<Booking>> ListAllBookingsAsync(BookingStatus? status) => _bookingRepository.FindAllAsync(status);
+
+    private async Task<Booking> GetAsync(long bookingId) =>
+        await _bookingRepository.FindByIdAsync(bookingId) ?? throw ApiException.NotFound("Заявка не найдена.");
 }

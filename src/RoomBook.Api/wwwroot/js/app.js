@@ -1,6 +1,7 @@
 import { getSession, setSession } from './api.js';
 import { openAuthDialog } from './auth.js';
-import { h, icon, toast, emptyState } from './ui.js';
+import { api } from './api.js';
+import { h, icon, toast, emptyState, openDialog, field, errorBox, showError, withBusy } from './ui.js';
 import { roomsPage } from './pages/rooms.js';
 import { myBookingsPage } from './pages/bookings.js';
 import { notificationsPage, refreshNotificationBadge } from './pages/notifications.js';
@@ -66,10 +67,11 @@ function renderTopbar(user, active) {
 
   const account = user
     ? h('div', { class: 'account' },
-      h('span', { class: 'avatar', 'aria-hidden': 'true' }, initials(user.fullName)),
-      h('span', { class: 'account__text' },
-        h('span', { class: 'account__name' }, user.fullName),
-        h('span', { class: 'account__role' }, user.role === 'Admin' ? 'Администратор' : 'Пользователь')),
+      h('button', { class: 'account__profile', type: 'button', title: 'Профиль', onclick: () => openProfileDialog(user) },
+        h('span', { class: 'avatar', 'aria-hidden': 'true' }, initials(user.fullName)),
+        h('span', { class: 'account__text' },
+          h('span', { class: 'account__name' }, user.fullName),
+          h('span', { class: 'account__role' }, user.role === 'Admin' ? 'Администратор' : 'Пользователь'))),
       h('button', { class: 'icon-btn', type: 'button', title: 'Выйти', 'aria-label': 'Выйти', onclick: logout }, icon('logout')))
     : h('div', { class: 'account' },
       h('button', { class: 'btn btn--ghost account__register', type: 'button', onclick: () => openAuthDialog('register') }, 'Регистрация'),
@@ -79,6 +81,38 @@ function renderTopbar(user, active) {
     h('a', { class: 'brand', href: '#/rooms' }, h('span', { class: 'brand__mark' }, icon('calendarCheck')), 'RoomBook'),
     h('nav', { class: 'nav', 'aria-label': 'Разделы' }, links),
     account));
+}
+
+/** Профиль: изменение имени (UserService.updateProfile). Сервер выдаёт новый токен с новым именем. */
+function openProfileDialog(user) {
+  const fullName = h('input', { required: true, maxlength: 200, autocomplete: 'name', value: user.fullName });
+  const error = errorBox();
+  const submit = h('button', { class: 'btn btn--primary', type: 'submit' }, 'Сохранить');
+  const form = h('form', {
+    class: 'form',
+    onsubmit: async (event) => {
+      event.preventDefault();
+      error.hidden = true;
+      await withBusy(submit, async () => {
+        try {
+          const result = await api.updateProfile(fullName.value.trim());
+          dialog.close();
+          setSession(result);
+          toast('Профиль обновлён');
+        } catch (err) {
+          showError(error, err);
+        }
+      });
+    },
+  },
+    h('p', { class: 'dialog__text' }, `${user.email} · ${user.role === 'Admin' ? 'администратор' : 'пользователь'}`),
+    error,
+    field('Имя и фамилия', fullName),
+    h('div', { class: 'dialog__actions' },
+      h('button', { class: 'btn btn--ghost', type: 'button', onclick: () => dialog.close() }, 'Отмена'),
+      submit));
+  const dialog = openDialog('Профиль', form);
+  fullName.focus();
 }
 
 function initials(fullName) {

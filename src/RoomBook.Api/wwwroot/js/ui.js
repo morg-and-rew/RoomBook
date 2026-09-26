@@ -182,7 +182,7 @@ export function skeleton(count, kind = 'card') {
 
 const STATUSES = {
   Pending: { label: 'Ожидает', tone: 'warn' },
-  Approved: { label: 'Подтверждена', tone: 'ok' },
+  Confirmed: { label: 'Подтверждена', tone: 'ok' },
   Rejected: { label: 'Отклонена', tone: 'danger' },
   Cancelled: { label: 'Отменена', tone: 'muted' },
 };
@@ -290,9 +290,9 @@ export function timeline(dateStr, slots, { selection = null, conflict = false } 
   const isToday = toDateInput(now) === dateStr;
   const track = h('div', { class: 'timeline__track' },
     isToday && block(dayStart, now, 'timeline__past', 'Прошедшее время'),
-    slots.map((slot) => block(slot.startTime, slot.endTime,
+    slots.map((slot) => block(slot.startAt, slot.endAt,
       `timeline__slot timeline__slot--${slot.status.toLowerCase()}`,
-      `${formatTime(slot.startTime)}–${formatTime(slot.endTime)} · ${statusLabel(slot.status)}`)),
+      `${formatTime(slot.startAt)}–${formatTime(slot.endAt)} · ${statusLabel(slot.status)}`)),
     selection && block(selection.start, selection.end,
       `timeline__selection${conflict ? ' is-conflict' : ''}`, 'Выбранное время'));
 
@@ -315,7 +315,7 @@ export function timeline(dateStr, slots, { selection = null, conflict = false } 
 export function timelineLegend() {
   const item = (kind, label) => h('span', { class: 'legend__item' }, h('span', { class: `legend__swatch legend__swatch--${kind}` }), label);
   return h('div', { class: 'legend' },
-    item('approved', 'Подтверждено'),
+    item('confirmed', 'Подтверждено'),
     item('pending', 'Ожидает подтверждения'),
     item('selection', 'Ваш выбор'));
 }

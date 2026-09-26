@@ -2,31 +2,37 @@ using System.ComponentModel.DataAnnotations;
 
 namespace RoomBook.Api.Dtos;
 
+public record EquipmentDto(
+    int Id,
+    string Code,
+    string Name
+);
+
 public record RoomDto(
-    Guid Id,
+    long Id,
     string Name,
+    string Building,
+    int Floor,
     int Capacity,
-    string[] Equipment,
+    string? Description,
+    IReadOnlyList<EquipmentDto> Equipment,
     bool IsActive,
     IReadOnlyList<RoomBusySlotDto>? BusySlots = null
 );
 
-/// <summary>Занятый интервал помещения (заявка в статусе Pending или Approved).</summary>
+/// <summary>Занятый интервал помещения: заявка в статусе Pending или Confirmed.</summary>
 public record RoomBusySlotDto(
-    DateTime StartTime,
-    DateTime EndTime,
+    DateTime StartAt,
+    DateTime EndAt,
     string Status
 );
 
-public record RoomCreateDto(
+/// <summary>Данные помещения для создания и изменения (RoomData на диаграмме).</summary>
+public record RoomDataDto(
     [Required, MaxLength(200)] string Name,
+    [Required, MaxLength(100)] string Building,
+    [Range(-5, 200)] int Floor,
     [Range(1, 1000)] int Capacity,
-    string[]? Equipment
-);
-
-public record RoomUpdateDto(
-    [Required, MaxLength(200)] string Name,
-    [Range(1, 1000)] int Capacity,
-    string[]? Equipment,
-    bool IsActive
+    [MaxLength(1000)] string? Description,
+    string[]? EquipmentCodes
 );

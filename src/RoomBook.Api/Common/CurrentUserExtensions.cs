@@ -4,10 +4,10 @@ namespace RoomBook.Api.Common;
 
 public static class CurrentUserExtensions
 {
-    public static Guid GetUserId(this ClaimsPrincipal principal)
+    public static long GetUserId(this ClaimsPrincipal principal)
     {
         var value = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (value is null || !Guid.TryParse(value, out var id))
+        if (value is null || !long.TryParse(value, out var id))
         {
             throw ApiException.Unauthorized("Не удалось определить текущего пользователя.");
         }

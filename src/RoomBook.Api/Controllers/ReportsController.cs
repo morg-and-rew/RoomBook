@@ -17,12 +17,16 @@ public class ReportsController : ControllerBase
         _reportService = reportService;
     }
 
-    /// <summary>US10: отчёт по загруженности помещений за период.</summary>
-    [HttpGet("occupancy")]
-    public async Task<ActionResult<OccupancyReportDto>> GetOccupancy(
-        [FromQuery] DateTime dateFrom, [FromQuery] DateTime dateTo)
+    /// <summary>US10: загруженность помещений за период (подтверждённые брони).</summary>
+    [HttpGet("utilization")]
+    public async Task<ActionResult<UtilizationReportDto>> Utilization([FromQuery] DateTime from, [FromQuery] DateTime to) =>
+        Ok((await _reportService.UtilizationReportAsync(from, to)).ToDto());
+
+    /// <summary>US10: тот же отчёт в CSV для Excel.</summary>
+    [HttpGet("utilization/csv")]
+    public async Task<IActionResult> UtilizationCsv([FromQuery] DateTime from, [FromQuery] DateTime to)
     {
-        var report = await _reportService.GetOccupancyReportAsync(dateFrom, dateTo);
-        return Ok(report);
+        var file = _reportService.ExportCsv(await _reportService.UtilizationReportAsync(from, to));
+        return File(file.Content, file.ContentType, file.FileName);
     }
 }

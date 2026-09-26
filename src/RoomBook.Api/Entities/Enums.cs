@@ -2,14 +2,22 @@ namespace RoomBook.Api.Entities;
 
 public enum UserRole
 {
-    User = 0,
-    Admin = 1
+    User,
+    Admin
 }
 
 public enum BookingStatus
 {
-    Pending = 0,
-    Approved = 1,
-    Rejected = 2,
-    Cancelled = 3
+    Pending,
+    Confirmed,
+    Rejected,
+    Cancelled
+}
+
+public enum NotificationType
+{
+    Created,
+    Confirmed,
+    Rejected,
+    Cancelled
 }
